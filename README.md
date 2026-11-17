@@ -2,7 +2,7 @@
 
 > 给 DeepSeek 官方 [chat-demo](https://github.com/deepseek-ai/chat-demo) 加上「多角色设定」的开源增强版。
 
-**在线试用**：<https://junyuan-li-liu.github.io/chat-demo-role/>
+**在线试用**：<https://junyuan-li-liu.github.io/rolebox/>
 
 > ⚠️ **非官方项目**：本项目是个人学习作品，基于 DeepSeek 开源的 [chat-demo](https://github.com/deepseek-ai/chat-demo) 二次开发，**与 DeepSeek 官方无关，未获官方授权或背书**。使用本项目产生的 API 费用由使用者自行承担，生成内容的责任亦由使用者承担。
 
@@ -37,7 +37,7 @@
 
 ## 快速开始
 
-1. 打开 <https://junyuan-li-liu.github.io/chat-demo-role/>
+1. 打开 <https://junyuan-li-liu.github.io/rolebox/>
 2. 点左下 **设置 → 数据管理**，填入你的 [DeepSeek API Key](https://platform.deepseek.com/api_keys)
 3. 点屏幕右侧的 **「角」** 按钮 → **新建** → 填角色名字和设定正文 → **保存**
 4. 关掉面板，直接开始聊天，设定已经自动带上了
@@ -54,7 +54,7 @@
 
 1. Fork 这个仓库
 2. 仓库 **Settings → Pages** → Source 选 `Deploy from a branch`，分支 `main`，目录 `/ (root)`
-3. 等一两分钟，访问 `https://<你的用户名>.github.io/chat-demo-role/`
+3. 等一两分钟，访问 `https://<你的用户名>.github.io/rolebox/`
 
 也可以用 Vercel、Cloudflare Pages 等任意静态托管，把仓库文件直接传上去即可（无需构建）。
 
