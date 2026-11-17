@@ -1,4 +1,4 @@
-# chat-demo-role
+# 角色匣 · RoleBox
 
 > 给 DeepSeek 官方 [chat-demo](https://github.com/deepseek-ai/chat-demo) 加上「多角色设定」的开源增强版。
 
