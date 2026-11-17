@@ -4,6 +4,8 @@
 
 **在线试用**：<https://junyuan-li-liu.github.io/chat-demo-role/>
 
+> ⚠️ **非官方项目**：本项目是个人学习作品，基于 DeepSeek 开源的 [chat-demo](https://github.com/deepseek-ai/chat-demo) 二次开发，**与 DeepSeek 官方无关，未获官方授权或背书**。使用本项目产生的 API 费用由使用者自行承担，生成内容的责任亦由使用者承担。
+
 ![主界面](docs/screenshot-main.png)
 
 ---
