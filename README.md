@@ -4,6 +4,8 @@
 
 **在线试用**：<https://junyuan-li-liu.github.io/chat-demo-role/>
 
+![主界面](docs/screenshot-main.png)
+
 ---
 
 ## 这是什么
@@ -25,8 +27,11 @@
 | 多角色管理 | 每个角色 = 名字 + 设定正文，可新建、编辑、删除 |
 | 一键切换 | 屏幕右侧「角」按钮打开面板，点一下换成当前角色 |
 | 自动注入 | 每次请求自动把当前角色作为 `system` 消息插入，无需手动粘贴 |
+| 导入导出 | 角色可导出为 JSON 备份，换设备时导入恢复 |
 | 本地存储 | 角色存在浏览器 `localStorage`，不经过服务器 |
 | 非侵入 | 只新增一个 `role-inject.js`，原版代码一行没改，随时可摘 |
+
+![角色面板](docs/screenshot-roles.png)
 
 ## 快速开始
 
@@ -50,6 +55,14 @@
 3. 等一两分钟，访问 `https://<你的用户名>.github.io/chat-demo-role/`
 
 也可以用 Vercel、Cloudflare Pages 等任意静态托管，把仓库文件直接传上去即可（无需构建）。
+
+## 已知限制
+
+说清楚，免得你用了才发现：
+
+- **角色是「全局切换」，不是「每个对话单独绑定」**。你在「角」面板里换成谁，之后所有对话都用这个角色。想同时开三路（一个顾问、一个陪练、一个老师）目前做不到，得来回切。
+- **角色数据存在浏览器里**，清缓存/换设备就没了。请用面板里的「导出」存一份 JSON。
+- 只测过 Edge / Chrome 内核浏览器，Safari 未验证。
 
 ## 技术实现
 
@@ -75,10 +88,11 @@ localStorage['dsh_active_role_v1'] // 当前角色 id
 - **角色不生效** → 确认「角」面板里那个角色后面有 ✓（表示是当前角色）
 - **数据丢了** → 浏览器清过缓存；角色是本地数据，不会自动备份
 
-## 致谢
+## 致谢与许可
 
-- 前端来自 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo)（MIT），本仓库在其 v0.1.1 基础上二次开发
-- 角色系统是本项目的增量部分，同样以 MIT 协议开源
+- 前端来自 [deepseek-ai/chat-demo](https://github.com/deepseek-ai/chat-demo)，本仓库在其 v0.1.1 基础上二次开发
+- 原项目为 MIT 协议，`LICENSE` 文件保留原样（Copyright © 2026 DeepSeek）
+- 本项目新增部分（`role-inject.js`、`guide.js`、文档）同样以 MIT 协议提供，可自由使用与修改
 
 ## 免责声明
 

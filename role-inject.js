@@ -177,8 +177,11 @@
   var newBtn = mkBtn('新建', false);
   var delBtn = mkBtn('删除', false);
   var applyBtn = mkBtn('设为当前', false);
+  var expBtn = mkBtn('导出', false);
+  var impBtn = mkBtn('导入', false);
   btnRow.appendChild(saveBtn); btnRow.appendChild(applyBtn);
   btnRow.appendChild(newBtn); btnRow.appendChild(delBtn);
+  btnRow.appendChild(expBtn); btnRow.appendChild(impBtn);
 
   var status = el('div', 'font-size:12px;color:#4d6bfe;margin-top:10px;min-height:16px');
 
@@ -298,6 +301,66 @@
     setActiveId(editingId);
     renderList();
     status.textContent = '已设为当前角色';
+  };
+
+  // 导出全部角色为 JSON 文件
+  expBtn.onclick = function () {
+    var list = loadRoles();
+    if (!list.length) { status.textContent = '没有角色可导出'; return; }
+    var payload = {
+      app: 'chat-demo-role',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      activeId: getActiveId(),
+      roles: list
+    };
+    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'chat-demo-roles-' + new Date().toISOString().slice(0, 10) + '.json';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1000);
+    status.textContent = '已导出 ' + list.length + ' 个角色';
+  };
+
+  // 导入 JSON（合并，同名同内容跳过）
+  impBtn.onclick = function () {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json,application/json';
+    input.onchange = function () {
+      var file = input.files && input.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        var data;
+        try { data = JSON.parse(String(reader.result)); } catch (e) {
+          status.textContent = '解析失败：不是合法的 JSON'; return;
+        }
+        var incoming = (data && Array.isArray(data.roles)) ? data.roles : null;
+        if (!incoming) { status.textContent = '文件格式不对：缺少 roles 数组'; return; }
+        var list = loadRoles();
+        var added = 0, skipped = 0;
+        incoming.forEach(function (r) {
+          if (!r || !r.name || !r.content) { skipped++; return; }
+          var dup = list.some(function (x) { return x.name === r.name && x.content === r.content; });
+          if (dup) { skipped++; return; }
+          var id = r.id && !list.some(function (x) { return x.id === r.id; }) ? r.id : uid();
+          list.push({ id: id, name: r.name, content: r.content });
+          added++;
+        });
+        saveRoles(list);
+        if (data.activeId && list.some(function (x) { return x.id === data.activeId; })) {
+          setActiveId(data.activeId);
+        }
+        renderList();
+        status.textContent = '导入完成：新增 ' + added + ' 个，跳过 ' + skipped + ' 个';
+      };
+      reader.readAsText(file, 'utf-8');
+    };
+    input.click();
   };
 
   // 暴露给控制台调试
