@@ -348,6 +348,7 @@
     a.click();
     setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1000);
     status.textContent = '已导出 ' + list.length + ' 个角色';
+    try { localStorage.setItem('dsh_last_export_v1', new Date().toISOString()); } catch (e) {}
   };
 
   // 导入 JSON（合并，同名同内容跳过）
@@ -820,6 +821,62 @@
     applyEnabledState(s.enabled);
     // 记住原生 fetch 给整理功能用（避免被自己的注入逻辑再包一层）
     window.__dshOrigFetch = window.__dshOrigFetch || window.fetch;
+  })();
+
+  // ---------- 备份提醒 ----------
+  // 数据只在 localStorage，清缓存/换设备就没了。改不了这个事实，
+  // 但可以在"快要丢"的时候提一句：超过 7 天没导出，就在右下角轻轻提示一次。
+  (function backupReminder() {
+    var LS_LAST = 'dsh_last_export_v1';
+    var LS_SNOOZE = 'dsh_backup_snooze_v1';
+    var DAY = 86400000;
+
+    function rd(k) { try { return localStorage.getItem(k) || ''; } catch (e) { return ''; } }
+    function wr(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+    function daysSince(iso) {
+      if (!iso) return Infinity;
+      var t = Date.parse(iso);
+      if (isNaN(t)) return Infinity;
+      return (Date.now() - t) / DAY;
+    }
+
+    function showToast(text) {
+      var box = el('div', [
+        'position:fixed', 'right:18px', 'bottom:18px', 'width:min(340px,86vw)',
+        'background:#fff', 'border-radius:12px', 'padding:14px 16px',
+        'box-shadow:0 10px 34px rgba(0,0,0,.18)', 'border:1px solid #e8eaf0',
+        'z-index:2147483005', 'font-family:system-ui,-apple-system,"Segoe UI",sans-serif',
+        'color:#1b1b1b', 'font-size:13px', 'line-height:1.7'
+      ].join(';'));
+      box.appendChild(el('div', 'font-weight:600;margin-bottom:4px', '数据该备份了'));
+      box.appendChild(el('div', 'color:#555;margin-bottom:12px', text));
+      var row = el('div', 'display:flex;gap:8px;justify-content:flex-end');
+      var later = mkBtn('过几天再说', false);
+      var go = mkBtn('去导出', true);
+      row.appendChild(later);
+      row.appendChild(go);
+      box.appendChild(row);
+      document.body.appendChild(box);
+      later.onclick = function () { wr(LS_SNOOZE, new Date().toISOString()); box.remove(); };
+      go.onclick = function () {
+        box.remove();
+        // 直接走角色面板的导出逻辑
+        try { if (typeof expBtn !== 'undefined' && expBtn) expBtn.click(); } catch (e) {}
+        wr(LS_SNOOZE, new Date().toISOString());
+      };
+    }
+
+    setTimeout(function () {
+      try {
+        if (!loadRoles().length) return;                       // 没有角色，不打扰
+        if (daysSince(rd(LS_SNOOZE)) < 3) return;              // 刚提示过
+        var d = daysSince(rd(LS_LAST));
+        if (d < 7) return;                                     // 最近导出过
+        showToast(d === Infinity
+          ? '你的角色设定只存在这个浏览器里，清缓存或换设备就没了。现在导出一份吧。'
+          : '上次导出已经是 ' + Math.floor(d) + ' 天前了。清缓存或换设备会丢数据，导一份备份吧。');
+      } catch (e) {}
+    }, 4000);
   })();
 
   // 暴露给控制台调试
