@@ -199,14 +199,12 @@
   var applyBtn = mkBtn('设为当前', false);
   var expBtn = mkBtn('导出', false);
   var impBtn = mkBtn('导入', false);
-  var docBtn = mkBtn('导入文档', false);
   var sumBtn = mkBtn('整理设定', false);
   var histBtn = mkBtn('历史', false);
   btnRow.appendChild(saveBtn); btnRow.appendChild(applyBtn);
   btnRow.appendChild(newBtn); btnRow.appendChild(delBtn);
   btnRow.appendChild(sumBtn); btnRow.appendChild(histBtn);
   btnRow.appendChild(expBtn); btnRow.appendChild(impBtn);
-  btnRow.appendChild(docBtn);
 
   var status = el('div', 'font-size:12px;color:#4d6bfe;margin-top:10px;min-height:16px');
 
@@ -339,68 +337,130 @@
     status.textContent = '已设为当前角色';
   };
 
-  // 导出全部角色为 JSON 文件
+  // 导出成 Markdown：记事本直接能看懂（换行是真换行，没有 \n 转义），也能再导回来
+  function toRolesMarkdown(list, activeId) {
+    var out = [];
+    out.push('# 角色匣 · 角色备份');
+    out.push('');
+    out.push('- 导出时间：' + new Date().toLocaleString('zh-CN'));
+    out.push('- 角色数量：' + list.length);
+    out.push('');
+    out.push('> 每个角色以「## 角色名」开头，下面的正文就是设定原文（换行是真实换行）。');
+    out.push('> 想恢复：点面板里的「导入」，选这个 .md 文件即可。');
+    out.push('');
+    list.forEach(function (r) {
+      out.push('## ' + r.name);
+      out.push('');
+      out.push('> id: ' + r.id + (r.id === activeId ? ' (当前使用)' : ''));
+      out.push('');
+      out.push(r.content);
+      out.push('');
+      out.push('---');
+      out.push('');
+    });
+    return out.join('\n');
+  }
+
   expBtn.onclick = function () {
     // 先把编辑框里的改动落盘，否则导出的是上次保存的旧内容
     doSave(true);
     var list = loadRoles();
     if (!list.length) { status.textContent = '没有角色可导出'; return; }
-    var payload = {
-      app: 'chat-demo-role',
-      version: 1,
-      exportedAt: new Date().toISOString(),
-      activeId: getActiveId(),
-      roles: list
-    };
+    var md = toRolesMarkdown(list, getActiveId());
     // 前面加 BOM：Windows 记事本靠这三个字节才认得出是 UTF-8，否则中文全乱码
-    var blob = new Blob(['\uFEFF' + JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
+    var blob = new Blob(['\uFEFF' + md], { type: 'text/markdown;charset=utf-8' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
-    a.download = 'chat-demo-roles-' + new Date().toISOString().slice(0, 10) + '.json';
+    a.download = 'rolebox-' + new Date().toISOString().slice(0, 10) + '.md';
     document.body.appendChild(a);
     a.click();
     setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1000);
-    status.textContent = '已导出 ' + list.length + ' 个角色';
+    status.textContent = '已导出 ' + list.length + ' 个角色（Markdown，记事本可直接看）';
     try { localStorage.setItem('dsh_last_export_v1', new Date().toISOString()); } catch (e) {}
   };
 
-  // 导入 JSON（合并，同名同内容跳过）
+  // ---------- 统一导入：按扩展名自动分流 ----------
+  // .json / .md → 角色备份；.md 不像备份就退化成正文；.txt / .docx → 正文
+
+  function importRolesData(data) {
+    var incoming = (data && Array.isArray(data.roles)) ? data.roles : null;
+    if (!incoming) { status.textContent = '文件格式不对：缺少 roles 数组'; return; }
+    var list = loadRoles();
+    var added = 0, skipped = 0;
+    incoming.forEach(function (r) {
+      if (!r || !r.name || !r.content) { skipped++; return; }
+      var dup = list.some(function (x) { return x.name === r.name && x.content === r.content; });
+      if (dup) { skipped++; return; }
+      var id = r.id && !list.some(function (x) { return x.id === r.id; }) ? r.id : uid();
+      list.push({ id: id, name: r.name, content: r.content });
+      added++;
+    });
+    saveRoles(list);
+    if (data.activeId && list.some(function (x) { return x.id === data.activeId; })) {
+      setActiveId(data.activeId);
+    }
+    renderList();
+    status.textContent = added
+      ? ('导入完成：新增 ' + added + ' 个' + (skipped ? '，跳过 ' + skipped + ' 个（已存在）' : ''))
+      : ('没有新增：这 ' + skipped + ' 个角色你都已有了');
+  }
+
+  function importRolesJson(text) {
+    var data;
+    var rawText = String(text).replace(/^\uFEFF/, '');
+    try { data = JSON.parse(rawText); } catch (e) {
+      status.textContent = '解析失败：不是合法的 JSON'; return;
+    }
+    importRolesData(data);
+  }
+
+  function parseRolesMarkdown(text) {
+    var clean = String(text).replace(/^\uFEFF/, '');
+    if (clean.indexOf('# 角色匣') < 0) return null;   // 不是我们导出的备份，当普通文档处理
+    var chunks = clean.split(/\n##\s+/).slice(1);
+    var roles = [], activeId = '';
+    chunks.forEach(function (chunk) {
+      var nl = chunk.indexOf('\n');
+      if (nl < 0) return;
+      var name = chunk.slice(0, nl).trim();
+      var body = chunk.slice(nl + 1);
+      var idM = body.match(/^>\s*id:\s*(\S+)([^\n]*)$/m);
+      var id = idM ? idM[1] : '';
+      if (idM && idM[2] && idM[2].indexOf('当前使用') >= 0) activeId = id;
+      body = body.replace(/^>\s*id:[^\n]*\n?/m, '');
+      body = body.replace(/\n---\s*$/, '').replace(/^\n+/, '').trim();
+      if (name && body) roles.push({ id: id, name: name, content: body });
+    });
+    return { roles: roles, activeId: activeId };
+  }
+
   impBtn.onclick = function () {
     var input = document.createElement('input');
     input.type = 'file';
-    input.accept = '.json,application/json';
+    input.accept = '.json,.md,.txt,.docx';
     input.onchange = function () {
       var file = input.files && input.files[0];
       if (!file) return;
-      var reader = new FileReader();
-      reader.onload = function () {
-        var data;
-        // 去掉可能存在的 BOM（我们导出的文件带 BOM，JSON.parse 不认它）
-        var rawText = String(reader.result).replace(/^\uFEFF/, '');
-        try { data = JSON.parse(rawText); } catch (e) {
-          status.textContent = '解析失败：不是合法的 JSON'; return;
-        }
-        var incoming = (data && Array.isArray(data.roles)) ? data.roles : null;
-        if (!incoming) { status.textContent = '文件格式不对：缺少 roles 数组'; return; }
-        var list = loadRoles();
-        var added = 0, skipped = 0;
-        incoming.forEach(function (r) {
-          if (!r || !r.name || !r.content) { skipped++; return; }
-          var dup = list.some(function (x) { return x.name === r.name && x.content === r.content; });
-          if (dup) { skipped++; return; }
-          var id = r.id && !list.some(function (x) { return x.id === r.id; }) ? r.id : uid();
-          list.push({ id: id, name: r.name, content: r.content });
-          added++;
-        });
-        saveRoles(list);
-        if (data.activeId && list.some(function (x) { return x.id === data.activeId; })) {
-          setActiveId(data.activeId);
-        }
-        renderList();
-        status.textContent = '导入完成：新增 ' + added + ' 个，跳过 ' + skipped + ' 个';
-      };
-      reader.readAsText(file, 'utf-8');
+      var fname = (file.name || '').toLowerCase();
+      status.textContent = '正在读取 ' + file.name + ' …';
+      if (fname.slice(-5) === '.json') {
+        file.text().then(importRolesJson)
+          .catch(function (e) { status.textContent = '读取失败：' + e.message; });
+      } else if (fname.slice(-5) === '.docx') {
+        readDocx(file).then(function (t) { applyImportedText(t, file.name); })
+          .catch(function (e) { status.textContent = '读取失败：' + e.message; });
+      } else if (fname.slice(-4) === '.txt' || fname.slice(-3) === '.md') {
+        file.text().then(function (t) {
+          if (fname.slice(-3) === '.md') {
+            var parsed = parseRolesMarkdown(t);
+            if (parsed && parsed.roles.length) { importRolesData(parsed); return; }
+          }
+          applyImportedText(t, file.name);
+        }).catch(function (e) { status.textContent = '读取失败：' + e.message; });
+      } else {
+        status.textContent = '支持 .json / .md（角色备份）、.txt / .docx（正文）。PDF 请先另存为文本。';
+      }
     };
     input.click();
   };
@@ -488,27 +548,7 @@
     }
   }
 
-  docBtn.onclick = function () {
-    var input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.txt,.md,.docx';
-    input.onchange = function () {
-      var file = input.files && input.files[0];
-      if (!file) return;
-      var name = (file.name || '').toLowerCase();
-      status.textContent = '正在读取 ' + file.name + ' …';
-      if (name.slice(-4) === '.txt' || name.slice(-3) === '.md') {
-        file.text().then(function (t) { applyImportedText(t, file.name); })
-          .catch(function (e) { status.textContent = '读取失败：' + e.message; });
-      } else if (name.slice(-5) === '.docx') {
-        readDocx(file).then(function (t) { applyImportedText(t, file.name); })
-          .catch(function (e) { status.textContent = '读取失败：' + e.message; });
-      } else {
-        status.textContent = '只支持 .txt / .md / .docx。PDF 请先另存为文本再导入。';
-      }
-    };
-    input.click();
-  };
+  // 正文类文件（.txt / .docx）走上面的统一导入，这里不再单独挂按钮
 
   // ---------- 设定整理（提议 + 确认） ----------
   // 手动触发：拿最近 N 轮对话问一次模型「有没有值得长期记住的新信息」，
