@@ -1,5 +1,7 @@
 # 角色匣 · RoleBox
 
+[![GitHub stars](https://img.shields.io/github/stars/junyuan-li-liu/rolebox?style=social)](https://github.com/junyuan-li-liu/rolebox) [![license](https://img.shields.io/github/license/junyuan-li-liu/rolebox)](https://github.com/junyuan-li-liu/rolebox/blob/main/LICENSE)
+
 > 给 DeepSeek 官方 [chat-demo](https://github.com/deepseek-ai/chat-demo) 加上「多角色设定」的开源增强版。
 
 **在线试用**：<https://junyuan-li-liu.github.io/rolebox/>
