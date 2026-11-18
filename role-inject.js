@@ -599,7 +599,7 @@
   sumEnabledLabel.appendChild(sumEnabled);
   sumEnabledLabel.appendChild(document.createTextNode('启用这个功能'));
   sumFoot.appendChild(sumEnabledLabel);
-  sumFoot.appendChild(el('div', 'font-size:11px;color:#aaa', '关闭后「整理设定」按钮会隐藏'));
+  sumFoot.appendChild(el('div', 'font-size:11px;color:#aaa', '关闭后按钮会变灰，随时可重新打开'));
 
   sumPanel.appendChild(sumTitle);
   sumPanel.appendChild(sumTip);
@@ -738,12 +738,15 @@
       return;
     }
     sumOut.appendChild(el('div', 'font-weight:600;margin-bottom:8px', '建议补充到「' + role.name + '」的设定里：'));
-    var box = el('div', [
-      'background:#f7f8fa', 'border:1px solid #e8eaf0', 'border-radius:8px',
-      'padding:10px 12px', 'margin-bottom:8px', 'white-space:pre-wrap', 'font-size:13px'
+    var box = el('textarea', [
+      'width:100%', 'box-sizing:border-box', 'background:#f7f8fa', 'border:1px solid #e8eaf0',
+      'border-radius:8px', 'padding:10px 12px', 'margin-bottom:8px', 'font-size:13px',
+      'line-height:1.7', 'font-family:inherit', 'resize:vertical', 'min-height:70px', 'outline:none'
     ].join(';'));
-    additions.forEach(function (a) { box.appendChild(el('div', '', '+ ' + a)); });
+    box.value = additions.join('\n');
     sumOut.appendChild(box);
+    sumOut.appendChild(el('div', 'font-size:12px;color:#999;margin-bottom:8px',
+      '可以直接在上面改（一行一条），改完点「采纳」就按改后的写进去。'));
     if (obj.reason) {
       sumOut.appendChild(el('div', 'font-size:12px;color:#888;margin-bottom:10px', '依据：' + obj.reason));
     }
@@ -758,6 +761,9 @@
       sumOut.textContent = '已忽略，设定没有改动。';
     };
     okBtn.onclick = function () {
+      var lines = (box.value || '').split('\n').map(function (s) { return s.trim(); })
+        .filter(function (s) { return s; });
+      if (!lines.length) { sumOut.textContent = '内容是空的，没有东西可写。'; return; }
       var list = loadRoles();
       var cur = null;
       for (var i = 0; i < list.length; i++) if (list[i].id === role.id) cur = list[i];
@@ -765,7 +771,7 @@
       pushHistory(cur.id, cur.content, obj.reason || '');
       var stamp = new Date().toISOString().slice(0, 10);
       var block = '\n\n<!-- 以下为后续补充（' + stamp + '） -->\n' +
-        additions.map(function (a) { return '- ' + a; }).join('\n');
+        lines.map(function (a) { return '- ' + a; }).join('\n');
       cur.content = cur.content + block;
       saveRoles(list);
       if (editingId === cur.id) contentArea.value = cur.content;
