@@ -339,7 +339,8 @@
       activeId: getActiveId(),
       roles: list
     };
-    var blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+    // 前面加 BOM：Windows 记事本靠这三个字节才认得出是 UTF-8，否则中文全乱码
+    var blob = new Blob(['\uFEFF' + JSON.stringify(payload, null, 2)], { type: 'application/json;charset=utf-8' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
@@ -362,7 +363,9 @@
       var reader = new FileReader();
       reader.onload = function () {
         var data;
-        try { data = JSON.parse(String(reader.result)); } catch (e) {
+        // 去掉可能存在的 BOM（我们导出的文件带 BOM，JSON.parse 不认它）
+        var rawText = String(reader.result).replace(/^\uFEFF/, '');
+        try { data = JSON.parse(rawText); } catch (e) {
           status.textContent = '解析失败：不是合法的 JSON'; return;
         }
         var incoming = (data && Array.isArray(data.roles)) ? data.roles : null;
