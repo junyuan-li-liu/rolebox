@@ -179,9 +179,11 @@
   var applyBtn = mkBtn('设为当前', false);
   var expBtn = mkBtn('导出', false);
   var impBtn = mkBtn('导入', false);
+  var docBtn = mkBtn('导入文档', false);
   btnRow.appendChild(saveBtn); btnRow.appendChild(applyBtn);
   btnRow.appendChild(newBtn); btnRow.appendChild(delBtn);
   btnRow.appendChild(expBtn); btnRow.appendChild(impBtn);
+  btnRow.appendChild(docBtn);
 
   var status = el('div', 'font-size:12px;color:#4d6bfe;margin-top:10px;min-height:16px');
 
@@ -359,6 +361,111 @@
         status.textContent = '导入完成：新增 ' + added + ' 个，跳过 ' + skipped + ' 个';
       };
       reader.readAsText(file, 'utf-8');
+    };
+    input.click();
+  };
+
+  // ---------- 从文档导入正文（txt / md / docx） ----------
+  // 只读本地文件，不发请求。docx 用浏览器原生 DecompressionStream 解压，零依赖。
+
+  function readZipEntry(buf, targetName) {
+    var view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    var eocd = -1;
+    var minPos = Math.max(0, buf.length - 65558);
+    for (var i = buf.length - 22; i >= minPos; i--) {
+      if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break; }
+    }
+    if (eocd < 0) throw new Error('不是有效的 zip/docx 文件');
+    var count = view.getUint16(eocd + 10, true);
+    var p = view.getUint32(eocd + 16, true);
+    for (var k = 0; k < count; k++) {
+      if (view.getUint32(p, true) !== 0x02014b50) break;
+      var method = view.getUint16(p + 10, true);
+      var compSize = view.getUint32(p + 20, true);
+      var nameLen = view.getUint16(p + 28, true);
+      var extraLen = view.getUint16(p + 30, true);
+      var commentLen = view.getUint16(p + 32, true);
+      var localOffset = view.getUint32(p + 42, true);
+      var name = new TextDecoder('utf-8').decode(buf.subarray(p + 46, p + 46 + nameLen));
+      if (name === targetName) {
+        var lNameLen = view.getUint16(localOffset + 26, true);
+        var lExtraLen = view.getUint16(localOffset + 28, true);
+        var dataStart = localOffset + 30 + lNameLen + lExtraLen;
+        var raw = buf.subarray(dataStart, dataStart + compSize);
+        if (method === 0) return Promise.resolve(new TextDecoder('utf-8').decode(raw));
+        if (method === 8) {
+          var ds = new DecompressionStream('deflate-raw');
+          return new Response(new Blob([raw]).stream().pipeThrough(ds))
+            .text();
+        }
+        throw new Error('不支持的压缩方式（' + method + '）');
+      }
+      p += 46 + nameLen + extraLen + commentLen;
+    }
+    throw new Error('文件里没找到 ' + targetName);
+  }
+
+  function readDocx(file) {
+    return file.arrayBuffer().then(function (ab) {
+      var buf = new Uint8Array(ab);
+      return readZipEntry(buf, 'word/document.xml');
+    }).then(function (xml) {
+      var NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
+      var doc = new DOMParser().parseFromString(xml, 'application/xml');
+      var err = doc.getElementsByTagName('parsererror');
+      if (err && err.length) throw new Error('docx 内容解析失败');
+      var paras = doc.getElementsByTagNameNS(NS, 'p');
+      var lines = [];
+      for (var i = 0; i < paras.length; i++) {
+        var ts = paras[i].getElementsByTagNameNS(NS, 't');
+        var s = '';
+        for (var j = 0; j < ts.length; j++) s += (ts[j].textContent || '');
+        lines.push(s);
+      }
+      return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+    });
+  }
+
+  var MAX_CHARS = 15000;   // 硬上限：约 1 万 token
+  var WARN_CHARS = 8000;   // 警戒线：约 5~7 千 token
+
+  function applyImportedText(text, fileName) {
+    var count = text.replace(/\s/g, '').length;
+    if (!count) { status.textContent = '这个文件里没读到文字（可能是空文档或纯图片）'; return; }
+    if (count > MAX_CHARS) {
+      status.textContent = '太长：' + count + ' 字，超过上限 ' + MAX_CHARS +
+        ' 字。设定正文每轮都会完整重发，太长会挤占上下文又费钱，请先精简。';
+      return;
+    }
+    contentArea.value = text;
+    if (!nameInput.value.trim() && fileName) {
+      nameInput.value = fileName.replace(/\.[^.]+$/, '');
+    }
+    if (count > WARN_CHARS) {
+      status.textContent = '已导入 ' + count + ' 字（偏长：每轮都会有这么多 token 重新计费，建议精简后再保存）';
+    } else {
+      status.textContent = '已导入 ' + count + ' 字，确认无误后点「保存」';
+    }
+  }
+
+  docBtn.onclick = function () {
+    var input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.txt,.md,.docx';
+    input.onchange = function () {
+      var file = input.files && input.files[0];
+      if (!file) return;
+      var name = (file.name || '').toLowerCase();
+      status.textContent = '正在读取 ' + file.name + ' …';
+      if (name.slice(-4) === '.txt' || name.slice(-3) === '.md') {
+        file.text().then(function (t) { applyImportedText(t, file.name); })
+          .catch(function (e) { status.textContent = '读取失败：' + e.message; });
+      } else if (name.slice(-5) === '.docx') {
+        readDocx(file).then(function (t) { applyImportedText(t, file.name); })
+          .catch(function (e) { status.textContent = '读取失败：' + e.message; });
+      } else {
+        status.textContent = '只支持 .txt / .md / .docx。PDF 请先另存为文本再导入。';
+      }
     };
     input.click();
   };
