@@ -286,11 +286,11 @@
   closeBtn.onclick = hide;
   mask.onclick = hide;
 
-  saveBtn.onclick = function () {
+  function doSave(silent) {
     var name = (nameInput.value || '').trim();
     var content = contentArea.value || '';
-    if (!name) { status.textContent = '先给角色起个名字'; return; }
-    if (!content.trim()) { status.textContent = '设定正文不能为空'; return; }
+    if (!name) { if (!silent) status.textContent = '先给角色起个名字'; return false; }
+    if (!content.trim()) { if (!silent) status.textContent = '设定正文不能为空'; return false; }
     var list = loadRoles();
     if (editingId) {
       var hit = false;
@@ -305,8 +305,19 @@
     }
     saveRoles(list);
     renderList();
-    status.textContent = '已保存（' + name + '，' + content.length + ' 字）';
-  };
+    if (!silent) status.textContent = '已保存（' + name + '，' + content.length + ' 字）';
+    return true;
+  }
+  saveBtn.onclick = function () { doSave(false); };
+
+  // 编辑框一有改动就提醒，避免"改了但没保存，导出的还是旧的"
+  function markDirty() {
+    if (status.textContent.indexOf('未保存') < 0) {
+      status.textContent = '有改动没保存 —— 要点「保存」才生效（导出/导入都会用已保存的内容）';
+    }
+  }
+  nameInput.addEventListener('input', markDirty);
+  contentArea.addEventListener('input', markDirty);
 
   newBtn.onclick = function () { fillEditor(null); renderList(); status.textContent = '新建模式：填名字和正文，点保存'; };
 
@@ -330,6 +341,8 @@
 
   // 导出全部角色为 JSON 文件
   expBtn.onclick = function () {
+    // 先把编辑框里的改动落盘，否则导出的是上次保存的旧内容
+    doSave(true);
     var list = loadRoles();
     if (!list.length) { status.textContent = '没有角色可导出'; return; }
     var payload = {
