@@ -39,6 +39,22 @@
     return 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
   }
 
+  // ---------- 记住最近的对话（供「整理设定」用） ----------
+  // 只记纯文本的 user / assistant 消息，不记 system，最多 80 条（约 40 轮）
+  function rememberRecent(messages) {
+    try {
+      var plain = [];
+      for (var i = 0; i < messages.length; i++) {
+        var m = messages[i];
+        if (!m || m.role === 'system') continue;
+        if (typeof m.content !== 'string' || !m.content) continue;
+        plain.push({ role: m.role, content: m.content });
+      }
+      window.__dshRecent = plain.slice(-80);
+      try { localStorage.setItem('dsh_recent_msgs_v1', JSON.stringify(plain.slice(-60))); } catch (e2) {}
+    } catch (e) {}
+  }
+
   // ---------- 请求拦截：把当前角色注入为 system ----------
   function applyRoleToMessages(messages) {
     var role = getActiveRole();
@@ -57,6 +73,7 @@
       var body;
       try { body = JSON.parse(rawBody); } catch (e) { return rawBody; }
       if (!body || !Array.isArray(body.messages)) return rawBody;
+      rememberRecent(body.messages);
       var next = applyRoleToMessages(body.messages);
       if (!next) return rawBody;
       body.messages = next;
@@ -67,6 +84,7 @@
         !(rawBody instanceof FormData) &&
         !(rawBody instanceof Blob) &&
         Array.isArray(rawBody.messages)) {
+      rememberRecent(rawBody.messages);
       var next2 = applyRoleToMessages(rawBody.messages);
       if (next2) {
         rawBody.messages = next2;
@@ -77,6 +95,8 @@
   }
 
   var origFetch = window.fetch;
+  // 留一份原生 fetch，给「整理设定」用；否则整理请求也会被下面的注入逻辑改掉
+  try { window.__dshOrigFetch = origFetch; } catch (e) {}
   if (typeof origFetch === 'function') {
     window.fetch = function (input, init) {
       try {
@@ -180,8 +200,11 @@
   var expBtn = mkBtn('导出', false);
   var impBtn = mkBtn('导入', false);
   var docBtn = mkBtn('导入文档', false);
+  var sumBtn = mkBtn('整理设定', false);
+  var histBtn = mkBtn('历史', false);
   btnRow.appendChild(saveBtn); btnRow.appendChild(applyBtn);
   btnRow.appendChild(newBtn); btnRow.appendChild(delBtn);
+  btnRow.appendChild(sumBtn); btnRow.appendChild(histBtn);
   btnRow.appendChild(expBtn); btnRow.appendChild(impBtn);
   btnRow.appendChild(docBtn);
 
@@ -469,6 +492,329 @@
     };
     input.click();
   };
+
+  // ---------- 设定整理（提议 + 确认） ----------
+  // 手动触发：拿最近 N 轮对话问一次模型「有没有值得长期记住的新信息」，
+  // 有就以「追加」方式补进正文，全程要用户点「采纳」，并留历史版本可回滚。
+
+  var LS_SETTINGS = 'dsh_role_settings_v1';
+  var LS_HISTORY = 'dsh_role_history_v1';
+  var LS_RECENT = 'dsh_recent_msgs_v1';
+
+  function loadSettings() {
+    try {
+      var o = JSON.parse(localStorage.getItem(LS_SETTINGS) || '{}') || {};
+      return { enabled: o.enabled !== false, rounds: parseInt(o.rounds, 10) || 20 };
+    } catch (e) { return { enabled: true, rounds: 20 }; }
+  }
+  function saveSettings(s) {
+    try { localStorage.setItem(LS_SETTINGS, JSON.stringify(s)); } catch (e) {}
+  }
+  function loadHistory() {
+    try {
+      var a = JSON.parse(localStorage.getItem(LS_HISTORY) || '[]');
+      return Array.isArray(a) ? a : [];
+    } catch (e) { return []; }
+  }
+  function saveHistory(list) {
+    try { localStorage.setItem(LS_HISTORY, JSON.stringify(list)); } catch (e) {}
+  }
+  function pushHistory(roleId, content, reason) {
+    if (!roleId) return;
+    var all = loadHistory();
+    all.unshift({ roleId: roleId, content: content, savedAt: new Date().toISOString(), reason: reason || '' });
+    var cnt = {}, out = [];
+    for (var i = 0; i < all.length; i++) {
+      var rid = all[i].roleId;
+      cnt[rid] = (cnt[rid] || 0) + 1;
+      if (cnt[rid] <= 10) out.push(all[i]);   // 每个角色保留 10 份
+    }
+    saveHistory(out.slice(0, 60));
+  }
+  function getRecent() {
+    if (Array.isArray(window.__dshRecent) && window.__dshRecent.length) return window.__dshRecent;
+    try {
+      var a = JSON.parse(localStorage.getItem(LS_RECENT) || '[]');
+      return Array.isArray(a) ? a : [];
+    } catch (e) { return []; }
+  }
+  // 从 localStorage 里捞 DeepSeek API Key（原应用把配置存在本地）
+  function findApiKey() {
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        var v = localStorage.getItem(k);
+        if (!v) continue;
+        if (/^sk-[A-Za-z0-9_\-]{16,}$/.test(v.trim())) return v.trim();
+        if (v.length < 400 && v.indexOf('sk-') > -1) {
+          var m = v.match(/sk-[A-Za-z0-9_\-]{16,}/);
+          if (m) return m[0];
+        }
+      }
+    } catch (e) {}
+    return '';
+  }
+
+  var sumMask = el('div', [
+    'position:fixed', 'inset:0', 'background:rgba(0,0,0,.45)',
+    'z-index:2147483003', 'display:none'
+  ].join(';'));
+
+  var sumPanel = el('div', [
+    'position:fixed', 'left:50%', 'top:50%', 'transform:translate(-50%,-50%)',
+    'width:min(680px,92vw)', 'max-height:86vh', 'overflow:auto',
+    'background:#fff', 'border-radius:14px', 'box-shadow:0 12px 48px rgba(0,0,0,.28)',
+    'z-index:2147483004', 'display:none', 'padding:20px',
+    'font-family:system-ui,-apple-system,"Segoe UI",sans-serif', 'color:#1b1b1b'
+  ].join(';'));
+
+  var sumTitle = el('div', 'display:flex;align-items:center;justify-content:space-between;margin-bottom:8px');
+  sumTitle.appendChild(el('div', 'font-size:17px;font-weight:600', '整理设定'));
+  var sumClose = el('button', 'border:none;background:transparent;font-size:20px;cursor:pointer;color:#888;line-height:1', '×');
+  sumTitle.appendChild(sumClose);
+
+  var sumTip = el('div', 'font-size:12px;color:#888;line-height:1.7;margin-bottom:14px',
+    '把最近的对话翻一遍，看有没有值得长期记进设定的新信息。只会「追加」到正文末尾，不会改你原来写的东西，而且改之前会存历史版本。');
+
+  var sumCtl = el('div', 'display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px');
+  sumCtl.appendChild(el('span', 'font-size:13px;color:#555', '取最近'));
+  var roundsInput = el('input', [
+    'width:70px', 'padding:6px 8px', 'font-size:13px', 'border:1px solid #ddd',
+    'border-radius:6px', 'outline:none', 'text-align:center'
+  ].join(';'));
+  roundsInput.type = 'number';
+  roundsInput.min = '2';
+  roundsInput.max = '100';
+  sumCtl.appendChild(roundsInput);
+  sumCtl.appendChild(el('span', 'font-size:13px;color:#555', '轮对话'));
+  var sumGo = mkBtn('开始整理', true);
+  sumCtl.appendChild(sumGo);
+
+  var sumOut = el('div', 'font-size:13px;line-height:1.8;min-height:40px;border-top:1px solid #eee;padding-top:12px');
+
+  var sumFoot = el('div', 'display:flex;align-items:center;justify-content:space-between;margin-top:16px;padding-top:12px;border-top:1px solid #eee');
+  var sumEnabled = el('input');
+  sumEnabled.type = 'checkbox';
+  var sumEnabledLabel = el('label', 'font-size:12px;color:#666;cursor:pointer;display:flex;align-items:center;gap:6px');
+  sumEnabledLabel.appendChild(sumEnabled);
+  sumEnabledLabel.appendChild(document.createTextNode('启用这个功能'));
+  sumFoot.appendChild(sumEnabledLabel);
+  sumFoot.appendChild(el('div', 'font-size:11px;color:#aaa', '关闭后「整理设定」按钮会隐藏'));
+
+  sumPanel.appendChild(sumTitle);
+  sumPanel.appendChild(sumTip);
+  sumPanel.appendChild(sumCtl);
+  sumPanel.appendChild(sumOut);
+  sumPanel.appendChild(sumFoot);
+  document.body.appendChild(sumMask);
+  document.body.appendChild(sumPanel);
+
+  function openSum() {
+    var s = loadSettings();
+    roundsInput.value = s.rounds;
+    sumEnabled.checked = s.enabled;
+    sumOut.textContent = '';
+    sumMask.style.display = 'block';
+    sumPanel.style.display = 'block';
+  }
+  function closeSum() { sumMask.style.display = 'none'; sumPanel.style.display = 'none'; }
+  sumClose.onclick = closeSum;
+  sumMask.onclick = closeSum;
+  // 关闭时**不隐藏按钮**——隐藏了就没有入口再打开，容易把人卡死
+  function applyEnabledState(enabled) {
+    sumBtn.textContent = enabled ? '整理设定' : '整理设定（已关）';
+    sumBtn.style.opacity = enabled ? '1' : '.5';
+    sumBtn.title = enabled ? '' : '这个功能已关闭，点开面板可以重新启用';
+  }
+  sumEnabled.onchange = function () {
+    var s = loadSettings();
+    s.enabled = sumEnabled.checked;
+    saveSettings(s);
+    applyEnabledState(s.enabled);
+  };
+  roundsInput.onchange = function () {
+    var s = loadSettings();
+    var n = parseInt(roundsInput.value, 10) || 20;
+    if (n < 2) n = 2;
+    if (n > 100) n = 100;
+    roundsInput.value = n;
+    s.rounds = n;
+    saveSettings(s);
+  };
+
+  var SUMMARIZE_PROMPT = [
+    '你是设定整理助手。下面是角色的当前设定，以及最近若干轮对话。',
+    '',
+    '任务：判断对话里是否出现了「值得长期记住」的新信息；如果有，写成可以直接追加到设定里的文字。',
+    '',
+    '只提取这些：',
+    '- 用户明确陈述的、长期有效的事实（身份、处境、偏好、关系、底线、忌讳）',
+    '- 用户明确纠正过的、对你的称呼或态度',
+    '',
+    '不要提取这些：',
+    '- 一次性的情绪、临时任务、当天的安排',
+    '- 你自己推测或总结出来的东西',
+    '- 用户没说、但你觉得「应该」有的信息',
+    '',
+    '输出严格 JSON，不要任何多余文字：',
+    '{"change": true, "additions": ["..."], "reason": "一句话说明依据"}',
+    '或',
+    '{"change": false, "additions": [], "reason": "..."}'
+  ].join('\n');
+
+  function doSummarize() {
+    var cfg = loadSettings();
+    if (!cfg.enabled) {
+      sumOut.textContent = '这个功能当前是关闭状态。勾上下面「启用这个功能」再点开始。';
+      return;
+    }
+    var role = getActiveRole();
+    if (!role) { sumOut.textContent = '先选中并保存一个角色再说。'; return; }
+    var key = findApiKey();
+    if (!key) {
+      sumOut.textContent = '没找到 API Key。请先在左下「设置 → 数据管理」里填好 DeepSeek 的 API Key。';
+      return;
+    }
+    var rounds = parseInt(roundsInput.value, 10) || 20;
+    var recent = getRecent();
+    var msgs = recent.slice(-rounds * 2);
+    if (msgs.length < 2) {
+      sumOut.textContent = '当前还没有可整理的对话。先聊几轮再回来。';
+      return;
+    }
+    var dialog = msgs.map(function (m) {
+      return (m.role === 'user' ? '用户：' : '助手：') + m.content;
+    }).join('\n\n');
+
+    sumGo.disabled = true;
+    sumGo.textContent = '整理中…';
+    sumOut.textContent = '正在分析最近 ' + Math.ceil(msgs.length / 2) + ' 轮对话…';
+
+    var payload = {
+      model: 'deepseek-chat',
+      temperature: 0.2,
+      messages: [
+        { role: 'system', content: SUMMARIZE_PROMPT },
+        { role: 'user', content: '【当前设定】\n' + role.content + '\n\n【最近对话】\n' + dialog }
+      ]
+    };
+    // 用原生的 fetch，避免被自己的拦截器再插一层 system
+    var rawFetch = window.__dshOrigFetch || window.fetch;
+
+    rawFetch('https://api.deepseek.com/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+      body: JSON.stringify(payload)
+    }).then(function (r) {
+      return r.json().then(function (j) {
+        if (!r.ok) throw new Error((j && j.error && j.error.message) || ('HTTP ' + r.status));
+        return j;
+      });
+    }).then(function (j) {
+      var text = j && j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content;
+      if (!text) throw new Error('模型没有返回内容');
+      var clean = text.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+      var obj;
+      try { obj = JSON.parse(clean); } catch (e) { throw new Error('模型返回的不是合法 JSON'); }
+      renderSuggestion(obj, role);
+    }).catch(function (e) {
+      sumOut.textContent = '整理失败：' + e.message + '（没有改动任何东西）';
+    }).then(function () {
+      sumGo.disabled = false;
+      sumGo.textContent = '开始整理';
+    });
+  }
+
+  function renderSuggestion(obj, role) {
+    sumOut.textContent = '';
+    var additions = (obj && Array.isArray(obj.additions)) ? obj.additions.filter(function (x) {
+      return typeof x === 'string' && x.trim();
+    }) : [];
+    if (!obj || !obj.change || !additions.length) {
+      sumOut.appendChild(el('div', 'color:#666', '这次聊下来，没有发现值得长期记进设定的新信息。'));
+      if (obj && obj.reason) {
+        sumOut.appendChild(el('div', 'font-size:12px;color:#999;margin-top:6px', '依据：' + obj.reason));
+      }
+      return;
+    }
+    sumOut.appendChild(el('div', 'font-weight:600;margin-bottom:8px', '建议补充到「' + role.name + '」的设定里：'));
+    var box = el('div', [
+      'background:#f7f8fa', 'border:1px solid #e8eaf0', 'border-radius:8px',
+      'padding:10px 12px', 'margin-bottom:8px', 'white-space:pre-wrap', 'font-size:13px'
+    ].join(';'));
+    additions.forEach(function (a) { box.appendChild(el('div', '', '+ ' + a)); });
+    sumOut.appendChild(box);
+    if (obj.reason) {
+      sumOut.appendChild(el('div', 'font-size:12px;color:#888;margin-bottom:10px', '依据：' + obj.reason));
+    }
+    var actRow = el('div', 'display:flex;gap:8px');
+    var okBtn = mkBtn('采纳', true);
+    var noBtn = mkBtn('忽略', false);
+    actRow.appendChild(okBtn);
+    actRow.appendChild(noBtn);
+    sumOut.appendChild(actRow);
+
+    noBtn.onclick = function () {
+      sumOut.textContent = '已忽略，设定没有改动。';
+    };
+    okBtn.onclick = function () {
+      var list = loadRoles();
+      var cur = null;
+      for (var i = 0; i < list.length; i++) if (list[i].id === role.id) cur = list[i];
+      if (!cur) { sumOut.textContent = '角色已被删除，无法写入。'; return; }
+      pushHistory(cur.id, cur.content, obj.reason || '');
+      var stamp = new Date().toISOString().slice(0, 10);
+      var block = '\n\n<!-- 以下为后续补充（' + stamp + '） -->\n' +
+        additions.map(function (a) { return '- ' + a; }).join('\n');
+      cur.content = cur.content + block;
+      saveRoles(list);
+      if (editingId === cur.id) contentArea.value = cur.content;
+      sumOut.textContent = '已追加到设定末尾，并存了一份历史版本（可在「历史」里回滚）。';
+    };
+  }
+
+  sumGo.onclick = doSummarize;
+
+  // 按钮：整理设定
+  sumBtn.onclick = openSum;
+
+  // 按钮：历史版本
+  histBtn.onclick = function () {
+    var role = getActiveRole() || (editingId ? { id: editingId } : null);
+    if (!role || !role.id) { status.textContent = '先选中一个角色'; return; }
+    var all = loadHistory().filter(function (x) { return x.roleId === role.id; });
+    if (!all.length) { status.textContent = '这个角色还没有历史版本（第一次被自动整理时会存）'; return; }
+    var pick = prompt(
+      '历史版本（最近的在前，最多 10 份）：\n\n' +
+      all.map(function (x, i) {
+        return (i + 1) + '. ' + new Date(x.savedAt).toLocaleString() +
+          '  ' + (x.content || '').length + ' 字' + (x.reason ? '  — ' + x.reason : '');
+      }).join('\n') +
+      '\n\n输入编号可回滚到那个版本，直接取消则不动。',
+      '1'
+    );
+    if (!pick) return;
+    var idx = parseInt(pick, 10) - 1;
+    if (!(idx >= 0 && idx < all.length)) { status.textContent = '编号不对，没有改动'; return; }
+    var target = all[idx];
+    var list = loadRoles();
+    var cur = null;
+    for (var i = 0; i < list.length; i++) if (list[i].id === role.id) cur = list[i];
+    if (!cur) { status.textContent = '角色不存在'; return; }
+    pushHistory(cur.id, cur.content, '回滚前自动备份');
+    cur.content = target.content;
+    saveRoles(list);
+    contentArea.value = cur.content;
+    status.textContent = '已回滚到 ' + new Date(target.savedAt).toLocaleString() + ' 的版本';
+  };
+
+  // 初始化：按设置还原开关状态（按钮始终留在面板里，避免关掉后再也找不到）
+  (function () {
+    var s = loadSettings();
+    applyEnabledState(s.enabled);
+    // 记住原生 fetch 给整理功能用（避免被自己的注入逻辑再包一层）
+    window.__dshOrigFetch = window.__dshOrigFetch || window.fetch;
+  })();
 
   // 暴露给控制台调试
   window.__dshRoles = { load: loadRoles, active: getActiveRole };
