@@ -144,6 +144,51 @@
   btn.title = '角色设定';
   document.body.appendChild(btn);
 
+  // ---------- PWA 安装入口 ----------
+  // 浏览器支持安装时会触发 beforeinstallprompt；把它存下来，
+  // 用我们自己的按钮触发安装，避免用户去菜单里翻「添加到桌面」。
+  var installBtn = null;
+  var deferredPrompt = null;
+
+  function removeInstallBtn() {
+    if (installBtn && installBtn.parentNode) installBtn.parentNode.removeChild(installBtn);
+    installBtn = null;
+  }
+
+  function ensureInstallBtn() {
+    if (installBtn || !deferredPrompt) return;
+    installBtn = el('button', [
+      'position:fixed', 'right:14px', 'top:calc(50% + 52px)',
+      'width:44px', 'height:44px', 'border-radius:22px',
+      'border:2px solid #4d6bfe', 'background:#fff', 'color:#4d6bfe',
+      'font-size:17px', 'line-height:1', 'cursor:pointer',
+      'z-index:2147483000', 'box-shadow:0 4px 14px rgba(0,0,0,.12)',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'font-family:inherit'
+    ].join(';'), '\u2B07');
+    installBtn.title = '安装到桌面（像 App 一样打开）';
+    installBtn.onclick = function () {
+      if (!deferredPrompt) return;
+      deferredPrompt.prompt();
+      deferredPrompt.userChoice.then(function (r) {
+        if (r && r.outcome === 'accepted') removeInstallBtn();
+        deferredPrompt = null;
+      }).catch(function () { deferredPrompt = null; });
+    };
+    document.body.appendChild(installBtn);
+  }
+
+  window.addEventListener('beforeinstallprompt', function (e) {
+    e.preventDefault();
+    deferredPrompt = e;
+    ensureInstallBtn();
+  });
+
+  window.addEventListener('appinstalled', function () {
+    deferredPrompt = null;
+    removeInstallBtn();
+  });
+
   var mask = el('div', [
     'position:fixed', 'inset:0', 'background:rgba(0,0,0,.35)',
     'z-index:2147483001', 'display:none'
