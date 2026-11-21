@@ -156,7 +156,7 @@
   }
 
   function ensureInstallBtn() {
-    if (installBtn || !deferredPrompt) return;
+    if (installBtn) return;
     installBtn = el('button', [
       'position:fixed', 'right:14px', 'top:calc(50% + 52px)',
       'width:44px', 'height:44px', 'border-radius:22px',
@@ -168,7 +168,10 @@
     ].join(';'), '\u2B07');
     installBtn.title = '安装到桌面（像 App 一样打开）';
     installBtn.onclick = function () {
-      if (!deferredPrompt) return;
+      if (!deferredPrompt) {
+        alert('这个浏览器没有提供安装入口。\n\n可以试试：\n· 手机：用 Chrome 或小米/红米自带浏览器打开本页\n· 电脑：Edge 菜单「更多工具 → 应用 → 安装此站点」\n\n如果之前装过又删了，请先去系统「应用管理」里卸载「角色匣」，再回来打开本页。');
+        return;
+      }
       deferredPrompt.prompt();
       deferredPrompt.userChoice.then(function (r) {
         if (r && r.outcome === 'accepted') removeInstallBtn();
@@ -188,6 +191,13 @@
     deferredPrompt = null;
     removeInstallBtn();
   });
+
+  // 按钮常驻（除非已经是「独立窗口」模式，那就说明装过了）
+  try {
+    var isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
+      || window.navigator.standalone;
+    if (!isStandalone) ensureInstallBtn();
+  } catch (e) { ensureInstallBtn(); }
 
   var mask = el('div', [
     'position:fixed', 'inset:0', 'background:rgba(0,0,0,.35)',
@@ -209,6 +219,18 @@
 
   var tip = el('div', 'font-size:12px;color:#888;margin-bottom:14px;line-height:1.6',
     '这里设置的角色会自动附加到你发出的每一次对话前面（system 提示），不用再手动粘贴。数据只存在本浏览器。');
+
+  // 版本号：从自己的 script src 的 ?v=N 读，用来判断浏览器有没有拿到新代码
+  var MODULE_VERSION = (function () {
+    try {
+      var s = (document.currentScript && document.currentScript.src) || '';
+      var m = s.match(/[?&]v=(\d+)/);
+      return m ? m[1] : '';
+    } catch (e) { return ''; }
+  })();
+
+  var verTip = el('div', 'font-size:11px;color:#bbb;margin:-8px 0 12px',
+    MODULE_VERSION ? ('注入模块 v' + MODULE_VERSION) : '注入模块');
 
   var listWrap = el('div', 'display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px');
 
@@ -260,6 +282,7 @@
 
   panel.appendChild(titleBar);
   panel.appendChild(tip);
+  panel.appendChild(verTip);
   panel.appendChild(listWrap);
   panel.appendChild(editor);
   document.body.appendChild(mask);
