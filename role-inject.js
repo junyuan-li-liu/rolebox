@@ -1073,3 +1073,51 @@
   document.addEventListener('focusout', apply);
   apply();
 })();
+/* ===== 新版本提示（2026-11-21，v22） =====
+   背景：GitHub Pages 给 HTML 的缓存是 10 分钟，改完代码后用户重开 App 仍可能拿到旧页，
+   于是误以为"必须清缓存"。这里主动查一次线上 index.html，比对 role-inject.js?v=N，
+   发现更高就在底部弹一条「有新版本」提示，点一下即刷新（service worker 是网络优先，刷新就能拿新资源）。 */
+(function () {
+  var self = document.currentScript && document.currentScript.src;
+  var MY = 0;
+  if (self) { var mm = self.match(/[?&]v=(\d+)/); if (mm) MY = parseInt(mm[1], 10); }
+  if (!MY) return;
+  var shown = false;
+  function check() {
+    if (shown) return;
+    var base = location.pathname.replace(/[^/]*$/, '');
+    fetch(base + 'index.html?_=' + Date.now(), { cache: 'no-store', credentials: 'same-origin' })
+      .then(function (r) { return r.ok ? r.text() : ''; })
+      .then(function (html) {
+        var m = html && html.match(/role-inject\.js\?v=(\d+)/);
+        if (!m) return;
+        var remote = parseInt(m[1], 10);
+        if (remote > MY) { shown = true; show(remote); }
+      })
+      .catch(function () {});
+  }
+  function show(v) {
+    if (document.getElementById('dsh-upd')) return;
+    var d = document.createElement('div');
+    d.id = 'dsh-upd';
+    d.style.cssText = 'position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:10000;' +
+      'display:flex;align-items:center;gap:10px;padding:9px 14px;border-radius:999px;' +
+      'background:#1f2328;color:#fff;font-size:13px;line-height:1;font-family:inherit;' +
+      'box-shadow:0 4px 16px rgba(0,0,0,.25)';
+    var txt = document.createElement('span');
+    txt.textContent = '有新版本（v' + v + '）';
+    var btn = document.createElement('a');
+    btn.textContent = '刷新';
+    btn.href = 'javascript:void(0)';
+    btn.style.cssText = 'color:#8ab4ff;text-decoration:none;font-weight:600';
+    btn.onclick = function () { location.reload(); };
+    var x = document.createElement('span');
+    x.textContent = '×';
+    x.style.cssText = 'opacity:.5;cursor:pointer;padding-left:2px';
+    x.onclick = function () { d.remove(); };
+    d.appendChild(txt); d.appendChild(btn); d.appendChild(x);
+    (document.body || document.documentElement).appendChild(d);
+  }
+  setTimeout(check, 2500);
+  setInterval(check, 5 * 60 * 1000);
+})();
