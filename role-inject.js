@@ -192,12 +192,7 @@
     removeInstallBtn();
   });
 
-  // 按钮常驻（除非已经是「独立窗口」模式，那就说明装过了）
-  try {
-    var isStandalone = (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches)
-      || window.navigator.standalone;
-    if (!isStandalone) ensureInstallBtn();
-  } catch (e) { ensureInstallBtn(); }
+  // 只在浏览器真的给了安装入口时才显示按钮（v20：常驻版会被误当成"有按钮就能装"）
 
   var mask = el('div', [
     'position:fixed', 'inset:0', 'background:rgba(0,0,0,.35)',
