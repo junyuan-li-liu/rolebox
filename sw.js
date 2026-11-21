@@ -1,9 +1,12 @@
 /* 角色匣 · Service Worker
  * 策略：同源 GET 一律「网络优先 + 成功就更新缓存」，离线时回退缓存。
- * 这样改了代码立刻能拿到新版，不需要靠版本号硬性失效；
- * 离线时仍能打开页面外壳（index.html 在预缓存里）。
+ *
+ * 2026-11-21 修订（v2）：
+ *   1. HTML 导航请求加 cache: 'no-store'。GitHub Pages 给 index.html 设了 max-age=600，
+ *      不绕过的话改完代码 10 分钟内打开仍是旧页面，用户会以为"必须清缓存"。
+ *   2. CACHE 名升到 rolebox-v2，activate 时把 v1 一起清掉，避免有人卡在旧壳里。
  */
-const CACHE = 'rolebox-v1';
+const CACHE = 'rolebox-v2';
 const CORE = ['./', './index.html', './manifest.webmanifest'];
 
 self.addEventListener('install', (e) => {
@@ -36,8 +39,15 @@ self.addEventListener('fetch', (e) => {
   // 只管同源；接口请求（api.deepseek.com 等）直接放行，不进缓存
   if (url.origin !== self.location.origin) return;
 
+  const isNav = req.mode === 'navigate' ||
+    (req.headers.get('accept') || '').indexOf('text/html') >= 0;
+
+  const net = isNav
+    ? fetch(new Request(req.url, { cache: 'no-store', credentials: 'same-origin', redirect: 'follow' }))
+    : fetch(req);
+
   e.respondWith(
-    fetch(req)
+    net
       .then((res) => {
         if (res && res.status === 200 && res.type === 'basic') {
           const copy = res.clone();
@@ -45,8 +55,6 @@ self.addEventListener('fetch', (e) => {
         }
         return res;
       })
-      .catch(() =>
-        caches.match(req).then((hit) => hit || caches.match('./index.html'))
-      )
+      .catch(() => caches.match(req).then((hit) => hit || caches.match('./index.html')))
   );
 });
