@@ -1035,3 +1035,41 @@
     (document.body || document.documentElement).appendChild(a);
   } catch (e) { /* 加不上也不影响主功能 */ }
 })();
+/* ===== 手机键盘适配（2026-11-21，v21） =====
+   问题：装成 App（standalone）后，安卓虚拟键盘弹出会盖住输入框，对话框看不见。
+   原因：原版用 window.visualViewport 同步 CSS 变量 --app-viewport-height / --app-viewport-top，
+        但前置条件是 visualViewport.scale === 1；部分机型/浏览器该值不是精确 1，整段逻辑被跳过。
+   做法：自己再同步一份同一对变量（写到 documentElement，靠 CSS 变量继承生效），
+        去掉 scale 判断；聚焦输入框时再补一次 scrollIntoView 兜底。 */
+(function () {
+  var vv = window.visualViewport;
+  if (!vv) return;
+  var raf = 0;
+  var FIELD = 'textarea, input:not([type="file"])';
+  function isField(el) { return !!(el && el.matches && el.matches(FIELD)); }
+  function apply() {
+    cancelAnimationFrame(raf);
+    raf = requestAnimationFrame(function () {
+      var root = document.documentElement;
+      if (!isField(document.activeElement)) {
+        root.style.removeProperty('--app-viewport-height');
+        root.style.removeProperty('--app-viewport-top');
+        return;
+      }
+      root.style.setProperty('--app-viewport-height', vv.height + 'px');
+      root.style.setProperty('--app-viewport-top', (vv.offsetTop || 0) + 'px');
+    });
+  }
+  vv.addEventListener('resize', apply);
+  vv.addEventListener('scroll', apply);
+  window.addEventListener('orientationchange', apply);
+  document.addEventListener('focusin', function (e) {
+    if (!isField(e.target)) return;
+    apply();
+    setTimeout(function () {
+      try { e.target.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch (err) {}
+    }, 260);
+  });
+  document.addEventListener('focusout', apply);
+  apply();
+})();
