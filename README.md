@@ -138,7 +138,9 @@ localStorage['dsh_last_export_v1']   // 上次导出时间（备份提醒用）
 
 ## 已踩过的坑
 
-- **改了脚本但界面没变化** → 浏览器缓存，`Ctrl + Shift + R` 强制刷新（维护者改动后记得给 `index.html` 里的脚本地址加 `?v=N`）
+- **怎么确认自己是不是最新版** → 点右侧「角」，面板里有一行「注入模块 vNN」。数字和仓库里 `index.html` 的 `?v=` 一致就是最新
+- **看到底部弹出「有新版本（vNN）」** → 点「刷新」就行。**不用清缓存**（v22 起自动检查，`sw.js` 对 HTML 已改用 `cache: 'no-store'`）
+- **维护者：改了代码但用户说没变化** → 先把 `index.html` 里的 `role-inject.js?v=N` 递增；再确认 `sw.js` 的 HTML 请求带 `cache: 'no-store'`（裸 `fetch(req)` 会走 HTTP 缓存，GitHub Pages 的 `max-age=600` 会让页面 10 分钟不更新）
 - **角色不生效** → 确认「角」面板里那个角色后面有 ✓（表示是当前角色）
 - **数据丢了** → 浏览器清过缓存；角色是本地数据，不会自动备份
 - **导出的文件在记事本里乱码** → 早期版本导出的是无 BOM 的 UTF-8，Windows 记事本会当 GBK 打开。现已改为 Markdown + BOM，旧 `.json` 备份也能正常导入
